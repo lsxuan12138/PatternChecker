@@ -20,6 +20,7 @@ import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.RenderTooltipEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
@@ -48,6 +49,7 @@ public final class PatternTerminalEvents {
     private static EntryKey persistedSelectionKey;
     private static ViewportState persistedViewport = new ViewportState(null, 0);
     private static boolean terminalPanelEnabled = true;
+    private static boolean renderingPanelOverlay;
 
     private record EntryKey(String location, int slot) {
     }
@@ -174,8 +176,23 @@ public final class PatternTerminalEvents {
     @SubscribeEvent
     public static void onScreenRender(ScreenEvent.Render.Post event) {
         if (event.getScreen() == activeScreen && activePanel != null) {
-            activePanel.renderOverlay(
-                    event.getGuiGraphics(), event.getMouseX(), event.getMouseY(), event.getPartialTick());
+            renderingPanelOverlay = true;
+            try {
+                activePanel.renderOverlay(
+                        event.getGuiGraphics(), event.getMouseX(), event.getMouseY(), event.getPartialTick());
+            } finally {
+                renderingPanelOverlay = false;
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void onRenderTooltip(RenderTooltipEvent.Pre event) {
+        if (!renderingPanelOverlay
+                && Minecraft.getInstance().screen == activeScreen
+                && activePanel != null
+                && activePanel.isInside(event.getX(), event.getY())) {
+            event.setCanceled(true);
         }
     }
 
@@ -211,6 +228,7 @@ public final class PatternTerminalEvents {
         private static final int ROW_HEIGHT = 22;
         private static final int ACTION_BUTTONS = 5;
         private static final int TOOLTIP_WIDTH = 240;
+        private static final double TOGGLE_DRAG_THRESHOLD_SQUARED = 9.0D;
         private static final float OVERLAY_Z = 500.0F;
 
         private final AE2Button scanButton;
@@ -233,6 +251,11 @@ public final class PatternTerminalEvents {
         private final int expandedHeight;
         private int capturedButton = -1;
         private boolean toggleCaptured;
+        private boolean toggleDragged;
+        private double togglePressX;
+        private double togglePressY;
+        private int toggleStartPanelX;
+        private int toggleStartPanelY;
         private boolean dragging;
         private boolean scrollbarDragging;
         private int scrollbarDragOffset;
@@ -260,9 +283,6 @@ public final class PatternTerminalEvents {
             panelToggleButton = new AE2Button(
                     x + width - COLLAPSED_SIZE, y, COLLAPSED_SIZE, COLLAPSED_SIZE,
                     Component.empty(), button -> {
-                        terminalPanelEnabled = !terminalPanelEnabled;
-                        setPanelExpanded(terminalPanelEnabled);
-                        updatePanelToggleButton();
                     });
 
             int splitWidth = (width - OUTER_PADDING * 2 - BUTTON_GAP) / 2;
@@ -418,6 +438,19 @@ public final class PatternTerminalEvents {
         public boolean mouseDragged(double mouseX, double mouseY, int button,
                                     double dragX, double dragY) {
             if (toggleCaptured && capturedButton == button) {
+                double offsetX = mouseX - togglePressX;
+                double offsetY = mouseY - togglePressY;
+                if (!toggleDragged
+                        && offsetX * offsetX + offsetY * offsetY >= TOGGLE_DRAG_THRESHOLD_SQUARED) {
+                    toggleDragged = true;
+                }
+                if (toggleDragged) {
+                    setX(toggleStartPanelX + (int) Math.round(offsetX));
+                    setY(toggleStartPanelY + (int) Math.round(offsetY));
+                    clampToScreen();
+                    moveButtons();
+                    saveOffsetFromPosition();
+                }
                 return true;
             }
             if (!terminalPanelEnabled) {
@@ -443,8 +476,15 @@ public final class PatternTerminalEvents {
             }
             if (toggleCaptured) {
                 panelToggleButton.mouseReleased(mouseX, mouseY, button);
+                boolean togglePanel = !toggleDragged;
                 toggleCaptured = false;
+                toggleDragged = false;
                 capturedButton = -1;
+                if (togglePanel) {
+                    terminalPanelEnabled = !terminalPanelEnabled;
+                    setPanelExpanded(terminalPanelEnabled);
+                    updatePanelToggleButton();
+                }
                 return true;
             }
             if (!terminalPanelEnabled) {
@@ -477,6 +517,11 @@ public final class PatternTerminalEvents {
             }
             capturedButton = button;
             toggleCaptured = true;
+            toggleDragged = false;
+            togglePressX = mouseX;
+            togglePressY = mouseY;
+            toggleStartPanelX = getX();
+            toggleStartPanelY = getY();
             return true;
         }
 
