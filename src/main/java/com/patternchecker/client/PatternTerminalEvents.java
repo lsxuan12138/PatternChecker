@@ -247,6 +247,7 @@ public final class PatternTerminalEvents {
         private final int collapsedY;
         private final int expandedHeight;
         private int capturedButton = -1;
+        private boolean toggleCaptured;
         private boolean dragging;
         private boolean scrollbarDragging;
         private int scrollbarDragOffset;
@@ -381,13 +382,13 @@ public final class PatternTerminalEvents {
                 return false;
             }
             if (!terminalPanelEnabled) {
-                return button == 0 && panelToggleButton.mouseClicked(mouseX, mouseY, button);
+                return captureToggleClick(mouseX, mouseY, button);
             }
             capturedButton = button;
             if (button != 0) {
                 return true;
             }
-            if (panelToggleButton.mouseClicked(mouseX, mouseY, button)) {
+            if (captureToggleClick(mouseX, mouseY, button)) {
                 return true;
             }
             if (beginDragging(mouseX, mouseY, button)) {
@@ -428,6 +429,9 @@ public final class PatternTerminalEvents {
         @Override
         public boolean mouseDragged(double mouseX, double mouseY, int button,
                                     double dragX, double dragY) {
+            if (toggleCaptured && capturedButton == button) {
+                return true;
+            }
             if (!terminalPanelEnabled) {
                 return false;
             }
@@ -446,10 +450,17 @@ public final class PatternTerminalEvents {
 
         @Override
         public boolean mouseReleased(double mouseX, double mouseY, int button) {
-            if (!terminalPanelEnabled) {
-                return panelToggleButton.mouseReleased(mouseX, mouseY, button);
-            }
             if (capturedButton != button) {
+                return false;
+            }
+            if (toggleCaptured) {
+                panelToggleButton.mouseReleased(mouseX, mouseY, button);
+                toggleCaptured = false;
+                capturedButton = -1;
+                return true;
+            }
+            if (!terminalPanelEnabled) {
+                capturedButton = -1;
                 return false;
             }
             if (scrollbarDragging) {
@@ -464,6 +475,20 @@ public final class PatternTerminalEvents {
             if (button == 0) {
                 endDragging(button);
             }
+            return true;
+        }
+
+        /**
+         * Starts an input capture only when the press actually hits the panel
+         * toggle. In particular, a collapsed panel must not consume releases
+         * belonging to buttons on the underlying terminal screen.
+         */
+        private boolean captureToggleClick(double mouseX, double mouseY, int button) {
+            if (button != 0 || !panelToggleButton.mouseClicked(mouseX, mouseY, button)) {
+                return false;
+            }
+            capturedButton = button;
+            toggleCaptured = true;
             return true;
         }
 
