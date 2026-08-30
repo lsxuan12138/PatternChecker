@@ -158,14 +158,11 @@ public final class PatternScanner {
         private final Level level;
         private final Map<IGrid, GridState> gridStates = new IdentityHashMap<>();
         private final Map<Object, MachineState> machineStates = new IdentityHashMap<>();
-        private final Map<Item, List<RecipeHolder<?>>> standardRecipesByOutput = new HashMap<>();
         private final Map<String, List<PreparedRecipe>> machineRecipesByOutput = new HashMap<>();
-        private final Map<DuplicateSignature, Boolean> currentRecipeMatches = new HashMap<>();
         private final Map<RecipeMatchKey, Boolean> machineRecipeMatches = new HashMap<>();
         private final Map<Object, Map<DuplicateSignature, ProcessingMachineResult>> packagedProviderMatches =
                 new IdentityHashMap<>();
         private final Set<String> loggedMachineMismatches = new HashSet<>();
-        private boolean standardRecipeIndexBuilt;
         private boolean machineRecipeIndexBuilt;
 
         private ScanContext(Level level) {
@@ -177,22 +174,6 @@ public final class PatternScanner {
                     grid.getStorageService().getInventory().getAvailableStacks(),
                     grid.getCraftingService(),
                     new HashMap<>()));
-        }
-
-        private List<RecipeHolder<?>> standardRecipesFor(Item item) {
-            if (!standardRecipeIndexBuilt) {
-                standardRecipeIndexBuilt = true;
-                var registryAccess = level.registryAccess();
-                for (RecipeHolder<?> holder : level.getRecipeManager().getOrderedRecipes()) {
-                    ItemStack result = holder.value().getResultItem(registryAccess);
-                    if (!result.isEmpty()) {
-                        standardRecipesByOutput
-                                .computeIfAbsent(result.getItem(), ignored -> new ArrayList<>())
-                                .add(holder);
-                    }
-                }
-            }
-            return standardRecipesByOutput.getOrDefault(item, List.of());
         }
 
         private List<PreparedRecipe> machineRecipesFor(String identifier) {
@@ -592,13 +573,6 @@ public final class PatternScanner {
             // Decoding already validated that a crafting/stonecutting/smithing
             // recipe still exists and matches, so the pattern is craftable.
             verdicts.add(verdictLine("patternchecker.verdict.craftable", patternName, location, null));
-            // Safety net: if the recipe was changed so much that no current
-            // recipe matches the encoded pattern anymore, flag it.
-            if (!hasCurrentRecipeMatch(level, details, context)) {
-                issues.add(new PatternIssue(PatternIssue.Type.WARNING, PatternIssue.Category.BROKEN,
-                        message("patternchecker.issue.recipeChanged", patternName, location, null),
-                        pos, location));
-            }
         }
 
         if (details.getOutputs().isEmpty()) {
@@ -1945,76 +1919,6 @@ public final class PatternScanner {
             }
         }
         return null;
-    }
-
-    /**
-     * Safety net for crafting/stonecutting/smithing patterns: checks whether
-     * ANY current recipe (including crafting) still matches the encoded
-     * inputs and output. Catches patterns that survived decoding but whose
-     * recipe was changed beyond recognition.
-     */
-    private static boolean hasCurrentRecipeMatch(Level level, IPatternDetails details, ScanContext context) {
-        DuplicateSignature signature = duplicateSignature(details);
-        Boolean cached = context.currentRecipeMatches.get(signature);
-        if (cached != null) {
-            return cached;
-        }
-        List<ItemStack> inputStacks = patternInputStacks(details);
-        if (inputStacks.isEmpty()) {
-            return true;
-        }
-        Set<RecipeHolder<?>> candidates = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (GenericStack output : details.getOutputs()) {
-            if (output != null && output.what() instanceof AEItemKey outputKey) {
-                candidates.addAll(context.standardRecipesFor(outputKey.getItem()));
-            }
-        }
-        var registryAccess = level.registryAccess();
-        for (RecipeHolder<?> holder : candidates) {
-            boolean inputsMatch = true;
-            for (Ingredient ingredient : holder.value().getIngredients()) {
-                // Skip empty cells of shaped recipes - they must not be matched.
-                if (ingredient == null || ingredient.isEmpty()) {
-                    continue;
-                }
-                boolean any = false;
-                for (ItemStack stack : inputStacks) {
-                    if (ingredient.test(stack)) {
-                        any = true;
-                        break;
-                    }
-                }
-                if (!any) {
-                    inputsMatch = false;
-                    break;
-                }
-            }
-            if (!inputsMatch) {
-                continue;
-            }
-            ItemStack result = holder.value().getResultItem(registryAccess);
-            for (GenericStack output : details.getOutputs()) {
-                if (output != null && output.what() instanceof AEItemKey outputKey
-                    && result.getItem() == outputKey.getItem()) {
-                    context.currentRecipeMatches.put(signature, true);
-                    return true;
-                }
-            }
-        }
-        context.currentRecipeMatches.put(signature, false);
-        return false;
-    }
-
-    private static List<ItemStack> patternInputStacks(IPatternDetails details) {
-        List<ItemStack> inputStacks = new ArrayList<>();
-        for (IPatternDetails.IInput input : details.getInputs()) {
-            for (GenericStack candidate : input.getPossibleInputs()) {
-                if (candidate != null && candidate.what() instanceof AEItemKey key) {
-                    inputStacks.add(key.toStack());
-                }
-            }
-        }
-        return inputStacks;
     }
 
     private enum ProcessingMachineResult {

@@ -64,7 +64,10 @@ public final class PatternTerminalEvents {
         }
         NetworkHandler.clearPendingToolList();
         int moduleHeight = Math.max(1, Math.min(MODULE_HEIGHT, screenHeight(screen)));
-        int anchorX = screenGuiLeft(screen) - 2;
+        // Keep the checker toggle outside the terminal bounds. FTB Quests adds
+        // a button at the terminal edge, and the collapsed 20x20 checker used
+        // to sit on top of it and consume its clicks.
+        int anchorX = screenGuiLeft(screen) - COLLAPSED_SIZE - 2;
         int anchorY = screenGuiTop(screen) + 6 + COLLAPSED_SIZE + 2;
         int panelWidth = terminalPanelEnabled ? MODULE_WIDTH : COLLAPSED_SIZE;
         int panelHeight = terminalPanelEnabled ? moduleHeight : COLLAPSED_SIZE;
@@ -240,6 +243,7 @@ public final class PatternTerminalEvents {
         private int dragOffsetY;
         private int syncDelayFrames = 12;
         private boolean syncRequested;
+        private boolean revealRestoredSelection;
         private List<ToolListPayload.Entry> cachedEntries = List.of();
         private Map<Integer, ToolListPayload.Entry> entriesByIndex = Map.of();
         private final Map<String, ItemStack> iconCache = new HashMap<>();
@@ -252,6 +256,7 @@ public final class PatternTerminalEvents {
             this.anchorY = anchorY;
             this.expandedHeight = expandedHeight;
             this.selectedKey = selectionKey;
+            this.revealRestoredSelection = selectionKey != null;
             refreshEntries(PatternCheckClient.getToolList());
             clampToScreen();
             panelToggleButton = new AE2Button(
@@ -554,12 +559,8 @@ public final class PatternTerminalEvents {
             if (polled != null) {
                 PatternCheckClient.setToolList(polled);
                 refreshEntries(polled);
-                selected = findMatchingEntry(polled.entries(), selectedKey);
-                if (selected < 0) {
-                    selectedKey = null;
-                    persistedSelectionKey = null;
-                }
-                scroll = 0;
+                restoreSelection(revealRestoredSelection);
+                revealRestoredSelection = false;
             }
             ToolListPayload payload = PatternCheckClient.getToolList();
             if (cachedEntries.isEmpty() && !payload.entries().isEmpty()) {
@@ -571,9 +572,6 @@ public final class PatternTerminalEvents {
             }
             if (!terminalPanelEnabled) {
                 return;
-            }
-            if (selected < 0 && selectedKey != null) {
-                selected = findMatchingEntry(payload.entries(), selectedKey);
             }
             updateButtons(payload);
 
@@ -618,17 +616,44 @@ public final class PatternTerminalEvents {
             return new EntryKey(entry.location(), entry.slot());
         }
 
-        private static int findMatchingEntry(
+        private static int findMatchingRow(
                 List<ToolListPayload.Entry> entries, EntryKey key) {
             if (key == null) {
                 return -1;
             }
-            for (ToolListPayload.Entry entry : entries) {
+            for (int row = 0; row < entries.size(); row++) {
+                ToolListPayload.Entry entry = entries.get(row);
                 if (entry.location().equals(key.location()) && entry.slot() == key.slot()) {
-                    return entry.index();
+                    return row;
                 }
             }
             return -1;
+        }
+
+        private void restoreSelection(boolean reveal) {
+            int row = findMatchingRow(cachedEntries, selectedKey);
+            if (row < 0) {
+                selected = -1;
+                selectedKey = null;
+                persistedSelectionKey = null;
+                clampScroll();
+                return;
+            }
+            selected = cachedEntries.get(row).index();
+            if (reveal) {
+                int visible = visibleRows();
+                if (row < scroll) {
+                    scroll = row;
+                } else if (row >= scroll + visible) {
+                    scroll = row - visible + 1;
+                }
+            }
+            clampScroll();
+        }
+
+        private void clampScroll() {
+            int maxScroll = Math.max(0, cachedEntries.size() - visibleRows());
+            scroll = Math.max(0, Math.min(maxScroll, scroll));
         }
 
         private void renderOverlay(GuiGraphics gui, int mouseX, int mouseY, float partialTick) {
