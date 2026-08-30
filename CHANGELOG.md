@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.4 - 2026-08-30
+
+### Changed
+
+- Restored the selected pattern when reopening the terminal checker, or the
+  previous viewport when the selection no longer exists.
+- Separated the collapsed toggle position from the expanded panel so each can
+  be dragged and constrained independently.
+- Rendered the checker overlay after other terminal overlays and suppressed
+  underlying tooltips while the pointer is over the checker.
+
+### Fixed
+
+- Fixed the collapsed checker intercepting clicks intended for FTB Quests and
+  other terminal controls.
+- Fixed collapsed-panel layout and input-capture glitches.
+- Fixed false recipe-change warnings for decoded crafting patterns using fluid
+  substitution or shapeless recipes.
+
 ## 1.0.3 - 2026-08-20
 
 ### Added
