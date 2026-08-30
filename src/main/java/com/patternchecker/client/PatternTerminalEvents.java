@@ -46,9 +46,13 @@ public final class PatternTerminalEvents {
     private static Screen activeScreen;
     private static ToolPanel activePanel;
     private static EntryKey persistedSelectionKey;
+    private static ViewportState persistedViewport = new ViewportState(null, 0);
     private static boolean terminalPanelEnabled = true;
 
     private record EntryKey(String location, int slot) {
+    }
+
+    private record ViewportState(EntryKey topEntry, int fallbackRow) {
     }
 
     private PatternTerminalEvents() {
@@ -64,29 +68,34 @@ public final class PatternTerminalEvents {
         }
         NetworkHandler.clearPendingToolList();
         int moduleHeight = Math.max(1, Math.min(MODULE_HEIGHT, screenHeight(screen)));
-        // Keep the checker toggle outside the terminal bounds. FTB Quests adds
-        // a button at the terminal edge, and the collapsed 20x20 checker used
-        // to sit on top of it and consume its clicks.
-        int anchorX = screenGuiLeft(screen) - COLLAPSED_SIZE - 2;
+        int anchorX = screenGuiLeft(screen) - 2;
         int anchorY = screenGuiTop(screen) + 6 + COLLAPSED_SIZE + 2;
+        // The terminal edge is shared by add-ons such as FTB Quests. Keep the
+        // collapsed toggle in a screen corner so it neither renders over nor
+        // consumes clicks intended for those side buttons.
+        int collapsedX = MODULE_GAP;
+        int collapsedY = MODULE_GAP;
         int panelWidth = terminalPanelEnabled ? MODULE_WIDTH : COLLAPSED_SIZE;
         int panelHeight = terminalPanelEnabled ? moduleHeight : COLLAPSED_SIZE;
         int panelX = terminalPanelEnabled
-                ? anchorX - (MODULE_WIDTH - COLLAPSED_SIZE)
-                : anchorX;
+                ? anchorX - (MODULE_WIDTH - COLLAPSED_SIZE) + savedOffsetX
+                : collapsedX;
         int panelY = terminalPanelEnabled
-                ? anchorY + COLLAPSED_SIZE - moduleHeight
-                : anchorY;
+                ? anchorY + COLLAPSED_SIZE - moduleHeight + savedOffsetY
+                : collapsedY;
         EntryKey selectionKey = activePanel != null ? activePanel.selectedKey : persistedSelectionKey;
         ToolPanel panel = new ToolPanel(
-                panelX + savedOffsetX,
-                panelY + savedOffsetY,
+                panelX,
+                panelY,
                 panelWidth,
                 panelHeight,
                 anchorX,
                 anchorY,
+                collapsedX,
+                collapsedY,
                 moduleHeight,
-                selectionKey);
+                selectionKey,
+                persistedViewport);
         activeScreen = screen;
         activePanel = panel;
     }
@@ -234,6 +243,8 @@ public final class PatternTerminalEvents {
         private EntryKey selectedKey;
         private final int anchorX;
         private final int anchorY;
+        private final int collapsedX;
+        private final int collapsedY;
         private final int expandedHeight;
         private int capturedButton = -1;
         private boolean dragging;
@@ -243,20 +254,24 @@ public final class PatternTerminalEvents {
         private int dragOffsetY;
         private int syncDelayFrames = 12;
         private boolean syncRequested;
-        private boolean revealRestoredSelection;
+        private boolean restoreViewportOnNextSync = true;
+        private final ViewportState viewportToRestore;
         private List<ToolListPayload.Entry> cachedEntries = List.of();
         private Map<Integer, ToolListPayload.Entry> entriesByIndex = Map.of();
         private final Map<String, ItemStack> iconCache = new HashMap<>();
 
         ToolPanel(int x, int y, int width, int height, int anchorX, int anchorY,
+                  int collapsedX, int collapsedY,
                   int expandedHeight,
-                  EntryKey selectionKey) {
+                  EntryKey selectionKey, ViewportState viewportToRestore) {
             super(x, y, width, height, Component.translatable("patternchecker.menu.title"));
             this.anchorX = anchorX;
             this.anchorY = anchorY;
+            this.collapsedX = collapsedX;
+            this.collapsedY = collapsedY;
             this.expandedHeight = expandedHeight;
             this.selectedKey = selectionKey;
-            this.revealRestoredSelection = selectionKey != null;
+            this.viewportToRestore = viewportToRestore;
             refreshEntries(PatternCheckClient.getToolList());
             clampToScreen();
             panelToggleButton = new AE2Button(
@@ -518,6 +533,7 @@ public final class PatternTerminalEvents {
             int maxScroll = Math.max(0, entryCount - visible);
             if (maxScroll == 0) {
                 scroll = 0;
+                saveViewport();
                 return;
             }
             int trackTop = getY() + LIST_TOP + 2;
@@ -529,6 +545,7 @@ public final class PatternTerminalEvents {
                     Math.min(trackTop + travel, (int) mouseY - scrollbarDragOffset));
             scroll = Math.max(0, Math.min(maxScroll,
                     Math.round((thumbY - trackTop) * maxScroll / (float) travel)));
+            saveViewport();
         }
 
         @Override
@@ -542,6 +559,7 @@ public final class PatternTerminalEvents {
             int maxScroll = Math.max(0, entries().size() - visibleRows());
             int direction = verticalAmount > 0 ? -1 : verticalAmount < 0 ? 1 : 0;
             scroll = Math.max(0, Math.min(maxScroll, scroll + direction));
+            saveViewport();
             return true;
         }
 
@@ -559,8 +577,8 @@ public final class PatternTerminalEvents {
             if (polled != null) {
                 PatternCheckClient.setToolList(polled);
                 refreshEntries(polled);
-                restoreSelection(revealRestoredSelection);
-                revealRestoredSelection = false;
+                restoreSelectionAndViewport(restoreViewportOnNextSync);
+                restoreViewportOnNextSync = false;
             }
             ToolListPayload payload = PatternCheckClient.getToolList();
             if (cachedEntries.isEmpty() && !payload.entries().isEmpty()) {
@@ -630,17 +648,17 @@ public final class PatternTerminalEvents {
             return -1;
         }
 
-        private void restoreSelection(boolean reveal) {
+        private void restoreSelectionAndViewport(boolean restoreViewport) {
             int row = findMatchingRow(cachedEntries, selectedKey);
             if (row < 0) {
                 selected = -1;
                 selectedKey = null;
                 persistedSelectionKey = null;
-                clampScroll();
-                return;
+                restoreViewport(restoreViewport ? viewportToRestore : persistedViewport);
+            } else {
+                selected = cachedEntries.get(row).index();
             }
-            selected = cachedEntries.get(row).index();
-            if (reveal) {
+            if (row >= 0 && restoreViewport) {
                 int visible = visibleRows();
                 if (row < scroll) {
                     scroll = row;
@@ -649,11 +667,25 @@ public final class PatternTerminalEvents {
                 }
             }
             clampScroll();
+            saveViewport();
+        }
+
+        private void restoreViewport(ViewportState viewport) {
+            int anchorRow = findMatchingRow(cachedEntries, viewport.topEntry());
+            scroll = anchorRow >= 0 ? anchorRow : viewport.fallbackRow();
+            clampScroll();
         }
 
         private void clampScroll() {
             int maxScroll = Math.max(0, cachedEntries.size() - visibleRows());
             scroll = Math.max(0, Math.min(maxScroll, scroll));
+        }
+
+        private void saveViewport() {
+            EntryKey topEntry = scroll >= 0 && scroll < cachedEntries.size()
+                    ? keyOf(cachedEntries.get(scroll))
+                    : null;
+            persistedViewport = new ViewportState(topEntry, scroll);
         }
 
         private void renderOverlay(GuiGraphics gui, int mouseX, int mouseY, float partialTick) {
@@ -713,28 +745,25 @@ public final class PatternTerminalEvents {
             } else {
                 setWidth(COLLAPSED_SIZE);
                 setHeight(COLLAPSED_SIZE);
-                setX(anchorX + savedOffsetX);
-                setY(anchorY + savedOffsetY);
+                setX(collapsedX);
+                setY(collapsedY);
                 setButtonsVisible(false);
             }
             clampToScreen();
             moveButtons();
-            saveOffsetFromPosition();
+            if (expanded) {
+                saveOffsetFromPosition();
+            }
         }
 
         /**
-         * Persist the dragged position in the coordinate system of the
-         * collapsed icon anchor. Expanded and collapsed panels have different
-         * top-left origins, so saving getX()-anchorX directly makes the next
-         * terminal screen recreate the panel at the wrong position.
+         * Persist the expanded panel's dragged position. The collapsed toggle
+         * has an independent fixed anchor so it cannot cover terminal add-on
+         * buttons.
          */
         private void saveOffsetFromPosition() {
-            int baseX = terminalPanelEnabled
-                    ? anchorX - (MODULE_WIDTH - COLLAPSED_SIZE)
-                    : anchorX;
-            int baseY = terminalPanelEnabled
-                    ? anchorY + COLLAPSED_SIZE - expandedHeight
-                    : anchorY;
+            int baseX = anchorX - (MODULE_WIDTH - COLLAPSED_SIZE);
+            int baseY = anchorY + COLLAPSED_SIZE - expandedHeight;
             savedOffsetX = getX() - baseX;
             savedOffsetY = getY() - baseY;
         }
