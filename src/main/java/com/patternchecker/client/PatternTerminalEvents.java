@@ -18,6 +18,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RenderTooltipEvent;
@@ -44,6 +45,8 @@ public final class PatternTerminalEvents {
     private static final int COLLAPSED_SIZE = 20;
     private static int savedOffsetX;
     private static int savedOffsetY;
+    private static int savedCollapsedX = -1;
+    private static int savedCollapsedY = -1;
     private static Screen activeScreen;
     private static ToolPanel activePanel;
     private static EntryKey persistedSelectionKey;
@@ -173,7 +176,7 @@ public final class PatternTerminalEvents {
         }
     }
 
-    @SubscribeEvent
+    @SubscribeEvent(priority = EventPriority.LOWEST)
     public static void onScreenRender(ScreenEvent.Render.Post event) {
         if (event.getScreen() == activeScreen && activePanel != null) {
             renderingPanelOverlay = true;
@@ -252,10 +255,13 @@ public final class PatternTerminalEvents {
         private int capturedButton = -1;
         private boolean toggleCaptured;
         private boolean toggleDragged;
+        private boolean toggleStartedExpanded;
         private double togglePressX;
         private double togglePressY;
-        private int toggleStartPanelX;
-        private int toggleStartPanelY;
+        private int toggleStartX;
+        private int toggleStartY;
+        private int collapsedButtonX;
+        private int collapsedButtonY;
         private boolean dragging;
         private boolean scrollbarDragging;
         private int scrollbarDragOffset;
@@ -280,6 +286,9 @@ public final class PatternTerminalEvents {
             this.viewportToRestore = viewportToRestore;
             refreshEntries(PatternCheckClient.getToolList());
             clampToScreen();
+            collapsedButtonX = savedCollapsedX >= 0 ? savedCollapsedX : getX();
+            collapsedButtonY = savedCollapsedY >= 0 ? savedCollapsedY : getY();
+            clampCollapsedButtonToScreen();
             panelToggleButton = new AE2Button(
                     x + width - COLLAPSED_SIZE, y, COLLAPSED_SIZE, COLLAPSED_SIZE,
                     Component.empty(), button -> {
@@ -445,11 +454,17 @@ public final class PatternTerminalEvents {
                     toggleDragged = true;
                 }
                 if (toggleDragged) {
-                    setX(toggleStartPanelX + (int) Math.round(offsetX));
-                    setY(toggleStartPanelY + (int) Math.round(offsetY));
-                    clampToScreen();
+                    if (toggleStartedExpanded) {
+                        setX(toggleStartX + (int) Math.round(offsetX));
+                        setY(toggleStartY + (int) Math.round(offsetY));
+                        clampToScreen();
+                        saveOffsetFromPosition();
+                    } else {
+                        collapsedButtonX = toggleStartX + (int) Math.round(offsetX);
+                        collapsedButtonY = toggleStartY + (int) Math.round(offsetY);
+                        clampCollapsedButtonToScreen();
+                    }
                     moveButtons();
-                    saveOffsetFromPosition();
                 }
                 return true;
             }
@@ -520,8 +535,9 @@ public final class PatternTerminalEvents {
             toggleDragged = false;
             togglePressX = mouseX;
             togglePressY = mouseY;
-            toggleStartPanelX = getX();
-            toggleStartPanelY = getY();
+            toggleStartedExpanded = terminalPanelEnabled;
+            toggleStartX = toggleStartedExpanded ? getX() : collapsedButtonX;
+            toggleStartY = toggleStartedExpanded ? getY() : collapsedButtonY;
             return true;
         }
 
@@ -817,6 +833,17 @@ public final class PatternTerminalEvents {
             setY(Math.max(0, Math.min(screenHeight - getHeight(), getY())));
         }
 
+        private void clampCollapsedButtonToScreen() {
+            int screenWidth = minecraft().getWindow().getGuiScaledWidth();
+            int screenHeight = minecraft().getWindow().getGuiScaledHeight();
+            collapsedButtonX = Math.max(0,
+                    Math.min(screenWidth - COLLAPSED_SIZE, collapsedButtonX));
+            collapsedButtonY = Math.max(0,
+                    Math.min(screenHeight - COLLAPSED_SIZE, collapsedButtonY));
+            savedCollapsedX = collapsedButtonX;
+            savedCollapsedY = collapsedButtonY;
+        }
+
         private void moveButtons() {
             int x = getX();
             int y = getY();
@@ -831,12 +858,12 @@ public final class PatternTerminalEvents {
             duplicateButton.setX(x + OUTER_PADDING + splitWidth + BUTTON_GAP);
             duplicateButton.setY(y + TOGGLE_BUTTON_Y);
             // The expanded toggle sits in the header. When collapsed it moves
-            // to the panel's former top-left corner, away from terminal side
-            // buttons, while still following the user's dragged panel position.
+            // independently within the full screen and does not inherit the
+            // expanded panel's much larger drag bounds.
             panelToggleButton.setX(terminalPanelEnabled
                     ? x + width - COLLAPSED_SIZE
-                    : x);
-            panelToggleButton.setY(y);
+                    : collapsedButtonX);
+            panelToggleButton.setY(terminalPanelEnabled ? y : collapsedButtonY);
 
             int available = width - OUTER_PADDING * 2 - BUTTON_GAP * (ACTION_BUTTONS - 1);
             int baseWidth = available / ACTION_BUTTONS;
