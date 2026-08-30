@@ -70,29 +70,16 @@ public final class PatternTerminalEvents {
         int moduleHeight = Math.max(1, Math.min(MODULE_HEIGHT, screenHeight(screen)));
         int anchorX = screenGuiLeft(screen) - 2;
         int anchorY = screenGuiTop(screen) + 6 + COLLAPSED_SIZE + 2;
-        // The terminal edge is shared by add-ons such as FTB Quests. Keep the
-        // collapsed toggle in a screen corner so it neither renders over nor
-        // consumes clicks intended for those side buttons.
-        int collapsedX = MODULE_GAP;
-        int collapsedY = MODULE_GAP;
-        int panelWidth = terminalPanelEnabled ? MODULE_WIDTH : COLLAPSED_SIZE;
-        int panelHeight = terminalPanelEnabled ? moduleHeight : COLLAPSED_SIZE;
-        int panelX = terminalPanelEnabled
-                ? anchorX - (MODULE_WIDTH - COLLAPSED_SIZE) + savedOffsetX
-                : collapsedX;
-        int panelY = terminalPanelEnabled
-                ? anchorY + COLLAPSED_SIZE - moduleHeight + savedOffsetY
-                : collapsedY;
+        int panelX = anchorX - (MODULE_WIDTH - COLLAPSED_SIZE) + savedOffsetX;
+        int panelY = anchorY + COLLAPSED_SIZE - moduleHeight + savedOffsetY;
         EntryKey selectionKey = activePanel != null ? activePanel.selectedKey : persistedSelectionKey;
         ToolPanel panel = new ToolPanel(
                 panelX,
                 panelY,
-                panelWidth,
-                panelHeight,
+                MODULE_WIDTH,
+                moduleHeight,
                 anchorX,
                 anchorY,
-                collapsedX,
-                collapsedY,
                 moduleHeight,
                 selectionKey,
                 persistedViewport);
@@ -243,8 +230,6 @@ public final class PatternTerminalEvents {
         private EntryKey selectedKey;
         private final int anchorX;
         private final int anchorY;
-        private final int collapsedX;
-        private final int collapsedY;
         private final int expandedHeight;
         private int capturedButton = -1;
         private boolean toggleCaptured;
@@ -262,14 +247,11 @@ public final class PatternTerminalEvents {
         private final Map<String, ItemStack> iconCache = new HashMap<>();
 
         ToolPanel(int x, int y, int width, int height, int anchorX, int anchorY,
-                  int collapsedX, int collapsedY,
                   int expandedHeight,
                   EntryKey selectionKey, ViewportState viewportToRestore) {
             super(x, y, width, height, Component.translatable("patternchecker.menu.title"));
             this.anchorX = anchorX;
             this.anchorY = anchorY;
-            this.collapsedX = collapsedX;
-            this.collapsedY = collapsedY;
             this.expandedHeight = expandedHeight;
             this.selectedKey = selectionKey;
             this.viewportToRestore = viewportToRestore;
@@ -372,6 +354,12 @@ public final class PatternTerminalEvents {
         }
 
         private boolean isInside(double mouseX, double mouseY) {
+            if (!terminalPanelEnabled) {
+                return mouseX >= panelToggleButton.getX()
+                        && mouseX < panelToggleButton.getX() + panelToggleButton.getWidth()
+                        && mouseY >= panelToggleButton.getY()
+                        && mouseY < panelToggleButton.getY() + panelToggleButton.getHeight();
+            }
             return mouseX >= getX() && mouseX < getX() + getWidth()
                     && mouseY >= getY() && mouseY < getY() + getHeight();
         }
@@ -609,7 +597,7 @@ public final class PatternTerminalEvents {
             if (cachedEntries.isEmpty() && !payload.entries().isEmpty()) {
                 refreshEntries(payload);
             }
-            setButtonsVisible(payload.available());
+            setButtonsVisible(payload.available() && terminalPanelEnabled);
             if (!payload.available()) {
                 return;
             }
@@ -761,30 +749,14 @@ public final class PatternTerminalEvents {
         }
 
         private void setPanelExpanded(boolean expanded) {
-            if (expanded) {
-                setWidth(MODULE_WIDTH);
-                setHeight(expandedHeight);
-                setX(anchorX - (MODULE_WIDTH - COLLAPSED_SIZE) + savedOffsetX);
-                setY(anchorY + COLLAPSED_SIZE - expandedHeight + savedOffsetY);
-                setButtonsVisible(true);
-            } else {
-                setWidth(COLLAPSED_SIZE);
-                setHeight(COLLAPSED_SIZE);
-                setX(collapsedX);
-                setY(collapsedY);
-                setButtonsVisible(false);
-            }
-            clampToScreen();
+            setButtonsVisible(expanded && PatternCheckClient.getToolList().available());
             moveButtons();
-            if (expanded) {
-                saveOffsetFromPosition();
-            }
         }
 
         /**
-         * Persist the expanded panel's dragged position. The collapsed toggle
-         * has an independent fixed anchor so it cannot cover terminal add-on
-         * buttons.
+         * Persist the expanded panel's dragged position. Collapsing only hides
+         * its contents; the panel geometry remains stable to avoid layout and
+         * input-state glitches while the toggle button is handling a click.
          */
         private void saveOffsetFromPosition() {
             int baseX = anchorX - (MODULE_WIDTH - COLLAPSED_SIZE);
@@ -813,12 +785,12 @@ public final class PatternTerminalEvents {
             inputButton.setY(y + TOGGLE_BUTTON_Y);
             duplicateButton.setX(x + OUTER_PADDING + splitWidth + BUTTON_GAP);
             duplicateButton.setY(y + TOGGLE_BUTTON_Y);
-            // Keep the icon button exactly the same size as the collapsed
-            // module and pin it to the module's top-right corner. In the
-            // collapsed state this resolves to the whole 20x20 widget,
-            // while in the expanded state it becomes the module's header
-            // toggle without covering the title.
-            panelToggleButton.setX(x + width - COLLAPSED_SIZE);
+            // The expanded toggle sits in the header. When collapsed it moves
+            // to the panel's former top-left corner, away from terminal side
+            // buttons, while still following the user's dragged panel position.
+            panelToggleButton.setX(terminalPanelEnabled
+                    ? x + width - COLLAPSED_SIZE
+                    : x);
             panelToggleButton.setY(y);
 
             int available = width - OUTER_PADDING * 2 - BUTTON_GAP * (ACTION_BUTTONS - 1);
