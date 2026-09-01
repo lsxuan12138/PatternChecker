@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5 - 2026-09-01
+
+### Fixed
+
+- Fixed stale checker availability briefly showing the panel and continuing to
+  block underlying tooltips after opening a terminal without the checker in the
+  player inventory.
+
 ## 1.0.4 - 2026-08-30
 
 ### Changed
@@ -16,9 +24,6 @@
 - Fixed the collapsed checker intercepting clicks intended for FTB Quests and
   other terminal controls.
 - Fixed collapsed-panel layout and input-capture glitches.
-- Fixed stale checker availability briefly showing the panel and continuing to
-  block underlying tooltips after opening a terminal without the checker in the
-  player inventory.
 - Fixed false recipe-change warnings for decoded crafting patterns using fluid
   substitution or shapeless recipes.
 
