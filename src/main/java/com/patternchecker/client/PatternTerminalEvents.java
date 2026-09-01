@@ -72,6 +72,9 @@ public final class PatternTerminalEvents {
             return;
         }
         NetworkHandler.clearPendingToolList();
+        // Do not reuse the previous terminal session's availability while the
+        // server is determining whether this screen has access to a checker.
+        PatternCheckClient.resetToolList();
         int moduleHeight = Math.max(1, Math.min(MODULE_HEIGHT, screenHeight(screen)));
         int anchorX = screenGuiLeft(screen) - 2;
         int anchorY = screenGuiTop(screen) + 6 + COLLAPSED_SIZE + 2;
@@ -194,7 +197,7 @@ public final class PatternTerminalEvents {
         if (!renderingPanelOverlay
                 && Minecraft.getInstance().screen == activeScreen
                 && activePanel != null
-                && activePanel.isInside(event.getX(), event.getY())) {
+                && activePanel.blocksUnderlyingHover(event.getX(), event.getY())) {
             event.setCanceled(true);
         }
     }
@@ -393,9 +396,17 @@ public final class PatternTerminalEvents {
                     && mouseY >= getY() && mouseY < getY() + getHeight();
         }
 
+        private boolean isAvailable() {
+            return PatternCheckClient.getToolList().available();
+        }
+
+        private boolean blocksUnderlyingHover(double mouseX, double mouseY) {
+            return isAvailable() && isInside(mouseX, mouseY);
+        }
+
         @Override
         public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            if (!PatternCheckClient.getToolList().available() || !isInside(mouseX, mouseY)) {
+            if (!isAvailable() || !isInside(mouseX, mouseY)) {
                 return false;
             }
             if (!terminalPanelEnabled) {
@@ -542,7 +553,7 @@ public final class PatternTerminalEvents {
         }
 
         private boolean beginDragging(double mouseX, double mouseY, int button) {
-            if (!PatternCheckClient.getToolList().available() || button != 0
+            if (!isAvailable() || button != 0
                     || mouseX < getX() || mouseX >= getX() + getWidth()
                     || mouseY < getY() || mouseY >= getY() + HEADER_HEIGHT) {
                 return false;
@@ -624,7 +635,7 @@ public final class PatternTerminalEvents {
 
         @Override
         public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-            if (!PatternCheckClient.getToolList().available() || !isInside(mouseX, mouseY)) {
+            if (!isAvailable() || !isInside(mouseX, mouseY)) {
                 return false;
             }
             if (!terminalPanelEnabled) {
@@ -766,7 +777,7 @@ public final class PatternTerminalEvents {
             gui.pose().pushPose();
             gui.pose().translate(0.0F, 0.0F, OVERLAY_Z);
             renderWidget(gui, mouseX, mouseY, partialTick);
-            if (PatternCheckClient.getToolList().available()) {
+            if (isAvailable()) {
                 updatePanelToggleButton();
                 if (hasRenderableSize(panelToggleButton)) {
                     panelToggleButton.render(gui, mouseX, mouseY, partialTick);
@@ -806,11 +817,11 @@ public final class PatternTerminalEvents {
 
         private void updatePanelToggleButton() {
             panelToggleButton.setMessage(Component.empty());
-            panelToggleButton.visible = PatternCheckClient.getToolList().available();
+            panelToggleButton.visible = isAvailable();
         }
 
         private void setPanelExpanded(boolean expanded) {
-            setButtonsVisible(expanded && PatternCheckClient.getToolList().available());
+            setButtonsVisible(expanded && isAvailable());
             moveButtons();
         }
 
